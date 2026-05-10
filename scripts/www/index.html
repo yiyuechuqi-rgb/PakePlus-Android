@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>极简编辑器 Pro</title>
+	<!-- 引入思源黑体/宋体 全粗细版本 -->
+	<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&family=Noto+Serif+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/fabric@5.3.0/dist/fabric.min.js"></script>
+    <style>
+        :root { --accent: #007aff; --h-top: 50px; --h-bot: 75px; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+
+body, html { 
+    margin: 0; padding: 0; width: 100%; height: 100%; 
+    overflow: hidden; background: #f0f7ff; font-family: sans-serif;
+    position: fixed; 
+}
+
+/* 顶部栏 */
+.top-bar {
+    height: var(--h-top); background: #fff; border-bottom: 1px solid #ddd;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 15px;
+    position: absolute; top: 0; width: 100%; z-index: 500;
+}
+
+/* 工作区 */
+.workspace {
+    position: absolute; top: var(--h-top); bottom: var(--h-bot);
+    left: 0; right: 0; display: flex; justify-content: center; 
+    align-items: flex-start; padding: 15px 0; overflow: hidden;
+}
+
+#canvas-holder { 
+    background: #fff; box-shadow: 0 5px 30px rgba(0,0,0,0.2); line-height: 0;
+}
+
+/* 属性面板：半透明毛玻璃 */
+.panel {
+    position: absolute; bottom: var(--h-bot); left: 0; right: 0;
+    background: rgba(255, 255, 255, 0.5); 
+    border-top: 1px solid rgba(0,0,0,0.1); padding: 15px;
+    display: none; z-index: 450; max-height: 55vh; overflow-y: auto;
+}
+.panel.active { display: block; }
+
+/* 底部导航 */
+.bottom-nav {
+    height: var(--h-bot); background: #fff; border-top: 1px solid #ddd;
+    display: flex; justify-content: space-around; position: absolute; bottom: 0; width: 100%; z-index: 500;
+    padding-bottom: env(safe-area-inset-bottom);
+}
+.nav-item { border: none; background: none; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; color: #333; gap: 4px; }
+.nav-item svg { width: 22px; height: 22px; stroke: #333; fill: none; stroke-width: 2; }
+
+/* 色卡 */
+.color-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; margin-top: 8px; height: 32px; overflow: hidden; }
+.color-grid.expanded { height: auto; overflow: visible; }
+.color-block { width: 28px; height: 28px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); cursor: pointer; }
+.color-plus { background: linear-gradient(45deg, #f093fb, #f5576c); display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold; }
+.expand-btn { font-size: 11px; color: var(--accent); border: none; background: none; padding: 10px 0; width: 100%; }
+
+/* 保存层 */
+#export-panel { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index: 600; display:none; flex-direction:column; align-items:center; justify-content:center; }
+.export-btn { background: var(--accent); color: #fff; border: none; padding: 12px 40px; border-radius: 25px; font-weight: bold; width: 240px; margin-bottom: 15px; }
+
+.btn-s { height: 28px; padding: 0 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; font-size: 11px; }
+.input-box { width: 55px; height: 25px; border: 1px solid #ddd; border-radius: 6px; text-align: center; font-size: 12px; }
+
+.tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+.tpl-item { border: 1px solid #eee; border-radius: 6px; overflow: hidden; position: relative; background: #fff; }
+.tpl-item img { width: 100%; height: 80px; object-fit: contain; }
+
+.align-matrix { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 90px; }
+.align-matrix button { height: 28px; border: 1px solid #ccc; background: #fff; border-radius: 4px; position: relative; }
+.align-matrix button::after { content:''; position:absolute; width:4px; height:4px; background:#ccc; border-radius:50%; top:50%; left:50%; transform:translate(-50%,-50%); }
+</style>
+</head>
+<body>
+<div class="top-bar">
+    <div style="display:flex; gap:10px;">
+        <button onclick="undo()" style="border:none;background:none;font-size:20px;">↺️</button>
+        <button onclick="redo()" style="border:none;background:none;font-size:20px;">↻️</button>
+    </div>
+    <div style="font-size:13px; font-weight:bold; letter-spacing:1px;">EDITOR PRO</div>
+    <button onclick="saveToGallery()" style="background:#B7C1CA; color:#fff; border:none; padding:6px 16px; border-radius:20px; font-size:12px; font-weight:bold;">保存相册</button>
+</div>
+<div class="workspace" id="ws" onclick="canvas.discardActiveObject().renderAll()">
+    <div id="canvas-holder" onclick="event.stopPropagation()"><canvas id="editor"></canvas></div>
+</div>
+
+<!-- 属性面板 -->
+<div id="prop-panel" class="panel">
+    <div id="text-tools" style="display:none">
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <input type="text" id="text-val-inp" style="flex:1; height:32px; border:1px solid #ddd; border-radius:6px; padding:0 10px; font-size:13px;" placeholder="在此修改文字内容..." oninput="syncText(this.value)">
+            <button onclick="addText()" class="btn-s" style="width:35px; height:32px; flex-shrink:0; padding:0; font-size:16px;">+</button>
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <select id="font-family" style="flex:1; height:28px; border-radius:6px;" onchange="updateAttr('fontFamily', this.value)"></select>
+            <button class="btn-s" onclick="document.getElementById('font-inp').click()">+ 载入</button>
+            <button class="btn-s" onclick="toggleVertical()">横/竖排</button>
+        </div>
+        <div class="color-grid" id="text-color-grid"></div>
+        <button class="expand-btn" onclick="document.getElementById('text-color-grid').classList.toggle('expanded')">展开/折叠色卡</button>
+		<div style="display:flex; align-items:center; gap:10px; margin:10px 0;">
+		    <span style="font-size:11px; color:var(--accent); width:40px;">行距</span>
+		    <input type="range" id="lh-range" style="flex:1; accent-color:#888;" min="1" max="500" oninput="updateAttr('lineHeight', this.value/100)">
+		</div>
+		<div style="display:flex; align-items:center; gap:10px; margin:10px 0;">
+		    <span style="font-size:11px; color:var(--accent); width:40px;">字距</span>
+		    <input type="range" id="cs-range" style="flex:1; accent-color:#888;" min="-100" max="1000" oninput="updateAttr('charSpacing', parseInt(this.value))">
+		</div>
+	</div>
+    
+	<div style="display:flex; align-items:center; gap:10px; margin:5px 0;">
+	    <span style="font-size:11px; color:var(--accent); width:40px;">大小</span>
+	    <input type="range" id="fs-range" style="flex:1; accent-color:var(--accent);" min="10" max="400" oninput="syncFs(this.value, 'range')">
+	    <input type="number" id="fs-input" class="input-box" oninput="syncFs(this.value, 'input')">
+	</div>
+    <div style="display:flex; align-items:center; gap:10px; margin:5px 0;">
+        <span style="font-size:11px;  color:var(--accent); width:40px;">透明度</span>
+        <input type="range" id="op-range" style="flex:1; accent-color:var(--accent);" min="0" max="100" oninput="syncOp(this.value, 'range')">
+        <input type="number" id="op-input" class="input-box" oninput="syncOp(this.value, 'input')">
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+        <div class="align-matrix">
+            <button onclick="alignObj('left','top')"></button><button onclick="alignObj('center','top')"></button><button onclick="alignObj('right','top')"></button>
+            <button onclick="alignObj('left','center')"></button><button onclick="alignObj('center','center')"></button><button onclick="alignObj('right','center')"></button>
+            <button onclick="alignObj('left','bottom')"></button><button onclick="alignObj('center','bottom')"></button><button onclick="alignObj('right','bottom')"></button>
+        </div>
+		<div style="display:flex; flex-direction:column; gap:4px; align-items:center; margin: 0 10px;">
+		    <button onclick="toggleLock()" id="lock-btn" class="btn-s" style="color:#666; border-color:#eee; width:55px;">🔒</button>
+		    <button onclick="clearAll()" class="btn-s" style="color:#999; border-color:#eee; width:55px;">清空</button> 
+		</div>
+		
+        <div style="display:flex; flex-direction:column; gap:4px;flex-shrink:0;">
+            <div style="display:flex; gap:6px;">
+                <button onclick="changeLvl('top')" class="btn-s">置顶</button>
+                <button onclick="changeLvl('bottom')" class="btn-s">置底</button>
+            </div>
+                <button onclick="cloneObj()" class="btn-s btn-copy-line">复制副本</button>
+                <button onclick="delObj()" class="btn-s btn-del-line">删除选中</button>
+        </div>
+    </div>
+</div>
+
+<div id="size-panel" class="panel">
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 15px;">
+        <button class="btn-s" style="padding:0" onclick="setRatio(1,1)">1:1</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(3,4)">3:4</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(4,5)">4:5</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(2,3)">2:3</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(9,16)">9:16</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(16,9)">16:9</button>
+        <button class="btn-s" style="padding:0" onclick="setRatio(2.35,1)">2.35:1</button>
+        <button class="btn-s" style="padding:0; color:var(--accent)" onclick="exchangeSize()">🔃 旋转</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; background: #f5f5f7; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+        <span style="font-size: 12px; color: #666; width: 30px;">比例</span>
+        <input type="number" id="ratio-w" class="input-box" style="flex: 1;" placeholder="宽">
+        <span style="font-weight: bold; color: #ccc;">:</span>
+        <input type="number" id="ratio-h" class="input-box" style="flex: 1;" placeholder="高">
+        <button onclick="applyManualRatio()" class="btn-s" style="background: #B7C1CA; color: #fff; border: none; width: 60px;">应用</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; padding: 0 10px;">
+        <span style="font-size: 12px; color: #666; width: 30px;">像素</span>
+        <input type="number" id="inp-w" class="input-box" style="flex: 1;" placeholder="W">
+        <span style="color: #eee;">|</span>
+        <input type="number" id="inp-h" class="input-box" style="flex: 1;" placeholder="H">
+        <button onclick="applyManualSize()" class="btn-s" style="width: 60px;">设定</button>
+    </div>
+</div>
+
+<div id="bg-panel" class="panel">
+    <div class="color-grid" id="bg-color-grid"></div>
+    <button class="expand-btn" onclick="document.getElementById('bg-color-grid').classList.toggle('expanded')">展开/折叠背景色</button>
+</div>
+
+<div id="watermark-panel" class="panel">
+    <div style="display: flex; gap: 8px;">
+        <button class="btn-s" style="flex:1" onclick="applyWatermark('#FFFFFF')">白色水印</button>
+        <button class="btn-s" style="flex:1; background:#666; color:#fff" onclick="applyWatermark('#666666')">灰色水印</button>
+    </div>
+</div>
+
+
+<!-- 找到 id="tpl-panel" 的地方，修改如下 -->
+<div id="tpl-panel" class="panel">
+    <div style="display: flex; gap: 5px; margin-bottom: 10px;">
+        <button onclick="saveTpl()" style="flex:1; background:#B7C1CA; color:#fff; border:none; padding:6px 10px; border-radius:6px;">存入模板</button>
+        <button onclick="document.getElementById('tpl-import').click()" style="flex:1; background:#ABB5BF; color:#fff; border:none; padding:6px 10px; border-radius:6px;">导入模板</button>
+    </div>
+    <div id="tpl-grid" class="tpl-grid"></div>
+    <input type="file" id="tpl-import" accept="application/json" hidden onchange="importTpl(this)">
+</div>
+
+
+<div class="bottom-nav">
+    <button class="nav-item" onclick="document.getElementById('img-inp').click()"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M21 15l-5-5L5 21"/></svg>图片</button>
+    <button class="nav-item" onclick="addWatermark()"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>水印</button>
+    <button class="nav-item" onclick="openPanel('prop-panel'); document.getElementById('text-tools').style.display='block';"><svg viewBox="0 0 24 24"><path d="M4 7V4h16v3M12 4v16"/></svg>文字</button>
+    <button class="nav-item" onclick="openPanel('tpl-panel')"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>模板</button>
+    <button class="nav-item" onclick="openPanel('size-panel')"><svg viewBox="0 0 24 24"><path d="M4 8V4h4m8 0h4v4m0 8v4h-4m-8 0H4v-4"/></svg>尺寸</button>
+    <button class="nav-item" onclick="openPanel('bg-panel')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>背景</button>
+</div>
+
+<input type="file" id="img-inp" accept="image/*" hidden onchange="importImg(this)">
+<input type="file" id="font-inp" accept=".ttf,.otf,.woff" hidden onchange="importFont(this)">
+<input type="color" id="bg-pick" hidden onchange="setBg(this.value)">
+<input type="color" id="tx-pick" hidden onchange="updateAttr('fill', this.value)">
+
+<script>
+    let baseW = 800, baseH = 800;
+    const canvas = new fabric.Canvas('editor', { 
+        backgroundColor: '#fff', preserveObjectStacking: true, enableRetinaScaling: true,
+        touchCornerSize: 40, cornerSize: 24, transparentCorners: false, cornerColor: '#007aff'
+    });
+	
+	fabric.Textbox.prototype.setControlsVisibility({ mt: false, mb: false });
+	fabric.Image.prototype.setControlsVisibility({ mt: false, mb: false });
+	fabric.Object.prototype.lockUniScaling = true;
+
+    let history = [], redoStack =[], isBusy = false;
+    const DB_NAME = "Editor_Pro_Final_Stable";
+    const grayRow =["#000000", "#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#999999", "#b3b3b3", "#FFFFFF"];
+    const customSets = [["#ffffff","#fdfcf7","#fbf8f7","#f8f5ea","#fbf8f9","#f5eff0","#f9f2f1"],["#fffdd1","#fcfdc9","#f4f8ce","#fffdbd","#edf2c0","#f8ffc7","#e6f0b0"],["#ffeea8","#fffc99","#f9e896","#e2d7a8","#e8dfba","#f3eedb","#eee7cb"],["#e5ece2","#dce5d8","#d3dfce","#c9d8c3","#bad1c4","#a9c6b6","#98bba7"],["#eaf7f7","#dcf0f0","#cde9e9","#bfe2e2","#b0dada","#edf2f0","#eef2ec"],["#dce7e1","#cbdcd3","#b7c1ca","#c5ccd4","#dce0e4","#e7eaec","#f0f2f4"],["#f5ebe9","#efe5e7","#e8dadd","#e0cfd3","#e8c9c5","#fbf8f9","#f6f8f5"]];
+
+    function fit() {
+        const ws = document.getElementById('ws');
+        const scale = Math.min((ws.offsetWidth - 20) / baseW, (ws.offsetHeight - 20) / baseH);
+        canvas.setDimensions({ width: baseW * scale, height: baseH * scale });
+        canvas.setViewportTransform([scale, 0, 0, scale, 0, 0]);
+        canvas.calcOffset();
+    }
+
+    function getHighResImage(multiplier = 1) {
+        const curScale = canvas.getZoom(), curW = canvas.width, curH = canvas.height;
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.setDimensions({ width: baseW, height: baseH });
+        const data = canvas.toDataURL({ format: 'png', quality: 1, multiplier: multiplier });
+        canvas.setDimensions({ width: curW, height: curH });
+        canvas.setViewportTransform([curScale, 0, 0, curScale, 0, 0]);
+        return data;
+    }
+
+    function importImg(i) {
+        if (!i.files[0]) return;
+        const r = new FileReader();
+        r.onload = e => fabric.Image.fromURL(e.target.result, img => {
+            let ratio = baseW / img.width; 
+            img.set({ scaleX: ratio, scaleY: ratio, left: 0, top: 0 });
+            canvas.add(img).setActiveObject(img); save();
+        });
+        r.readAsDataURL(i.files[0]); i.value = '';
+    }
+
+    function saveToGallery() {
+        const data = getHighResImage(1.5);
+        if (window.plus) {
+            const bitmap = new plus.nativeObj.Bitmap("save");
+            bitmap.loadBase64Data(data, () => {
+                bitmap.save("_doc/export.png", { overwrite: true }, (e) => {
+                    plus.gallery.save(e.target, () => alert("已存入相册"), () => alert("保存失败"));
+                });
+            });
+        } else {
+            const a = document.createElement('a'); a.download = 'img.png'; a.href = data; a.click();
+        }
+    }
+
+    function syncText(v) {
+        const o = canvas.getActiveObject();
+        if (!o || (o.type !== 'i-text' && o.type !== 'textbox')) return;
+        o.set('text', o.isVert ? v.split('').join('\n') : v);
+        canvas.requestRenderAll(); save();
+    }
+
+    function toggleVertical() {
+        const o = canvas.getActiveObject(); 
+        if (!o || (o.type !== 'textbox' && o.type !== 'i-text')) return;
+        o.isVert = !o.isVert;
+        if (o.isVert) { o.set('text', o.text.replace(/\n/g, '')); o.set({ width: 50, textAlign: 'center' }); } 
+        else { o.set({ width: 300, textAlign: 'left' }); }
+        o.setCoords(); canvas.renderAll(); save(); 
+    }
+
+    async function openDB() {
+        return new Promise(res => {
+            const req = indexedDB.open(DB_NAME, 6);
+            req.onupgradeneeded = e => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains("templates")) db.createObjectStore("templates", { keyPath: "id" });
+                if (!db.objectStoreNames.contains("fonts")) db.createObjectStore("fonts", { keyPath: "name" });
+                if (!db.objectStoreNames.contains("config")) db.createObjectStore("config", { keyPath: "key" });
+            };
+            req.onsuccess = e => res(e.target.result);
+        });
+    }
+
+    // 关键修复：保存画布到 IndexedDB 永不丢失
+    async function save() {
+        if (isBusy) return;
+        const json = JSON.stringify(canvas.toJSON(['isVert', 'lockMovementX', 'lockMovementY', 'lockRotation', 'lockScalingX', 'lockScalingY', 'hasControls']));
+        history.push(json); if (history.length > 20) history.shift(); redoStack = [];
+        
+        // 同时存入 localStorage 和 IndexedDB (双保险)
+        localStorage.setItem('v17_stable', json);
+        const db = await openDB();
+        db.transaction("config", "readwrite").objectStore("config").put({ key: "last_state", data: json, w: baseW, h: baseH });
+    }
+
+    function loadState(stateStr) {
+        if (!stateStr) return;
+        isBusy = true;
+        const json = JSON.parse(stateStr);
+        if (json.baseW) baseW = json.baseW;
+        if (json.baseH) baseH = json.baseH;
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.setDimensions({ width: baseW, height: baseH });
+        canvas.loadFromJSON(json, () => { fit(); canvas.requestRenderAll(); isBusy = false; });
+    }
+
+    function undo() { if(history.length<=1) return; redoStack.push(history.pop()); loadState(history[history.length-1]); }
+    function redo() { if(!redoStack.length) return; const s=redoStack.pop(); history.push(s); loadState(s); }
+
+    function setRatio(w, h) { 
+        isBusy = true; 
+        if (w >= h) { baseW = 1000; baseH = Math.round(1000 * (h / w)); } 
+        else { baseH = 1000; baseW = Math.round(1000 * (w / h)); }
+        fit(); isBusy = false; save(); closeAllPanels(); 
+    }
+	
+	function exchangeSize() { const oldW = baseW; const oldH = baseH; isBusy = true; baseW = oldH; baseH = oldW; fit(); isBusy = false; save(); }
+	function applyManualRatio() { const w = parseFloat(document.getElementById('ratio-w').value), h = parseFloat(document.getElementById('ratio-h').value); if (w && h) setRatio(w, h); }
+    function applyManualSize() { const w=parseInt(document.getElementById('inp-w').value), h=parseInt(document.getElementById('inp-h').value); if(w && h) { isBusy=true; baseW=w; baseH=h; fit(); isBusy=false; save(); closeAllPanels(); } }
+
+    function closeAllPanels() { document.querySelectorAll('.panel').forEach(p => p.classList.remove('active')); }
+    function openPanel(id) { const p = document.getElementById(id); const act = p.classList.contains('active'); closeAllPanels(); if(!act) { p.classList.add('active'); if(id==='tpl-panel') renderTpls(); } }
+
+    function syncOp(v, src) { 
+        const o = canvas.getActiveObject(); if(!o) return; 
+        let n = parseInt(v)||0; if(src==='range') document.getElementById('op-input').value=n; else document.getElementById('op-range').value=n; 
+        o.set('opacity', n/100); canvas.requestRenderAll(); save(); 
+    }
+
+    function syncFs(v, src) {
+        const o = canvas.getActiveObject(); if (!o) return;
+        let n = parseInt(v) || 10;
+        if (src === 'range') document.getElementById('fs-input').value = n; else document.getElementById('fs-range').value = n;
+        if (o.type === 'i-text' || o.type === 'textbox') o.set('fontSize', n); 
+        else { const scale = n / 100; o.set({ scaleX: scale, scaleY: scale }); o.setCoords(); }
+        canvas.requestRenderAll(); save();
+    }
+    
+    function initColors() {
+        const build=(grid, isBg)=>{
+            grid.innerHTML=""; grayRow.forEach(c=>addB(grid,c,isBg)); customSets.forEach(set=>set.forEach(c=>addB(grid,c,isBg)));
+            const p=document.createElement('div'); p.className='color-block color-plus'; p.innerText='+'; p.onclick=()=>document.getElementById(isBg?'bg-pick':'tx-pick').click(); grid.appendChild(p);
+        };
+        const addB=(grid,c,isBg)=>{ const d=document.createElement('div'); d.className='color-block'; d.style.background=c; d.onclick=()=>{if(isBg)setBg(c); else updateAttr('fill',c);}; grid.appendChild(d); };
+        build(document.getElementById('bg-color-grid'),true); build(document.getElementById('text-color-grid'),false);
+    }
+
+    function addText() {
+        const saved = localStorage.getItem('software_default_font') || "'Noto Serif SC'|700";
+        const parts = saved.split('|'), fontFamily = parts[0], fontWeight = parts[1] || 'normal';
+        const t = new fabric.Textbox('输入内容', {
+            left: 50, top: 50, width: 300, fontSize: 50, fontFamily: fontFamily, fontWeight: fontWeight,
+            fill: '#000000', splitByGrapheme: true, breakWords: true,
+        });
+        canvas.add(t).setActiveObject(t); save();
+    }
+	
+    async function importFont(i) {
+        const f = i.files[0]; if (!f) return;
+        const r = new FileReader();
+        r.onload = async e => {
+            const name = f.name.split('.')[0], data = e.target.result;
+            const db = await openDB();
+            db.transaction("fonts", "readwrite").objectStore("fonts").put({ name, data });
+            registerFont(name, data);
+        };
+        r.readAsDataURL(f);
+    }
+
+    function registerFont(name, data) {
+        const face = new FontFace(name, `url(${data})`);
+        face.load().then(l => {
+            document.fonts.add(l);
+            const sel = document.getElementById('font-family');
+            if (![...sel.options].some(o => o.value === name)) sel.add(new Option(name, name), 0);
+            sel.value = name;
+            const o = canvas.getActiveObject();
+            if(o && (o.type==='i-text'||o.type==='textbox')) { o.set('fontFamily', name); canvas.requestRenderAll(); }
+        });
+    }
+
+    function setBg(c) { canvas.setBackgroundColor(c,()=>{canvas.requestRenderAll();save();}); }
+
+    function updateAttr(p, v) {
+        const o = canvas.getActiveObject();
+        if (o) {
+            if (p === 'fontFamily') {
+                if (v.includes('|')) { const ps = v.split('|'); o.set('fontFamily', ps[0]); o.set('fontWeight', ps[1]); } 
+                else { o.set('fontFamily', v); o.set('fontWeight', 'normal'); }
+                localStorage.setItem('software_default_font', v);
+            } else { o.set(p, v); }
+            canvas.requestRenderAll(); save();
+        }
+    }
+    
+    function delObj() { const objs = canvas.getActiveObjects(); if (objs.length) { objs.forEach(obj => canvas.remove(obj)); canvas.discardActiveObject(); canvas.requestRenderAll(); save(); } }
+	
+	// 替换原有的 addWatermark 函数
+	function addWatermark() {
+	    // 直接打开面板，不需要确认框
+	    openPanel('watermark-panel');
+	}
+	
+	// 实际添加水印的逻辑（供面板按钮调用）
+	function applyWatermark(color) {
+	    const svgData = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="98" viewBox="0 0 120 98">
+	      <g>
+	        <path d="M57.83 29.94c-2.83 0-5.13-2.31-5.13-5.17s2.3-5.17 5.13-5.17 5.13 2.31 5.13 5.17-2.3 5.17-5.13 5.17m-28.91 0c-2.83 0-5.13-2.31-5.13-5.17s2.3-5.17 5.13-5.17 5.13 2.31 5.13 5.17-2.3 5.17-5.13 5.17M43.37 0C19.42 0 0 16.31 0 36.43c0 10.98 5.84 20.86 14.99 27.54.73.53 1.21 1.39 1.21 2.38 0 .32-.07.62-.15.93-.73 2.75-1.9 7.14-1.95 7.35-.09.35-.23.7-.23 1.07 0 .8.65 1.46 1.45 1.46.31 0 .57-.12.83-.27l9.5-5.53c.71-.41 1.47-.67 2.3-.67.44 0 .87.07 1.28.19 4.43 1.28 9.21 2 14.16 2 .8 0 1.59-.02 2.38-.06-.94-2.84-1.46-5.83-1.46-8.93 0-18.35 17.71-33.23 39.56-33.23.79 0 .99.03 1.77.06C82.36 13.31 65.01 0 43.37 0"/>
+	        <path d="M95.9 58.71c-2.49 0-4.51-2.04-4.51-4.55s2.02-4.55 4.51-4.55 4.51 2.04 4.51 4.55-2.02 4.55-4.51 4.55m-24.1 0c-2.49 0-4.51-2.04-4.51-4.55s2.02-4.55 4.51-4.55 4.51 2.04 4.51 4.55-2.02 4.55-4.51 4.55m35.7 28.11c7.62-5.57 12.49-13.8 12.49-22.95 0-16.77-16.18-30.36-36.14-30.36S47.7 47.1 47.7 63.87s16.18 30.36 36.15 30.36c4.12 0 8.11-.59 11.8-1.66.34-.1.69-.16 1.06-.16.69 0 1.32.21 1.92.56l7.91 4.6c.22.13.44.23.7.23.67 0 1.21-.54 1.21-1.21 0-.3-.12-.6-.19-.89-.05-.17-1.02-3.84-1.63-6.12-.07-.26-.13-.51-.13-.77 0-.82.4-1.54 1.01-1.98z"/>
+	      </g>
+	    </svg>`; 
+	        
+	        fabric.loadSVGFromString(svgData, (objects, options) => {
+	            const logo = fabric.util.groupSVGElements(objects, options);
+	            logo.set({
+	                left: baseW / 2,
+	                top: baseH / 2,
+	                scaleX: 0.8,
+	                scaleY: 0.8,
+	                fill: color,       // 设置初始颜色
+	                opacity: 0.5,      // 默认半透明
+	                isWatermark: true, // 自定义标识
+	                hasControls: false, // 禁用控制框（缩放/旋转点都不显示）
+	                selectable: true,   // 依然允许选中和移动
+	                lockUniScaling: true 
+	            });
+	            
+	            // 关键：强制让内部所有子元素继承这个颜色
+	            if (logo._objects) {
+	                logo._objects.forEach(obj => obj.set('fill', color));
+	            }
+	    
+	            canvas.add(logo).setActiveObject(logo);
+	            save();
+	        });
+	    }
+
+
+	function toggleLock() {
+	    const o = canvas.getActiveObject(); if (!o) return;
+	    const isL = !o.lockMovementX;
+	    o.set({ lockMovementX: isL, lockMovementY: isL, lockRotation: isL, lockScalingX: isL, lockScalingY: isL, hasControls: !isL });
+	    document.getElementById('lock-btn').innerText = isL ? '🔓' : '🔒';
+	    canvas.requestRenderAll(); save();
+	}
+	
+	function clearAll() { if (confirm('确定要清空画布？')) { canvas.remove(...canvas.getObjects()); canvas.discardActiveObject(); canvas.requestRenderAll(); save(); } }
+	
+	function cloneObj() {
+	    const o = canvas.getActiveObject(); if (!o) return;
+	    o.clone(cloned => {
+	        canvas.discardActiveObject(); cloned.set({ left: cloned.left + 20, top: cloned.top + 20, evented: true });
+	        if (cloned.type === 'activeSelection') { cloned.canvas = canvas; cloned.forEachObject(obj => canvas.add(obj)); cloned.setCoords(); } 
+            else canvas.add(cloned);
+	        canvas.setActiveObject(cloned); canvas.requestRenderAll(); save();
+	    });
+	}
+	
+    function changeLvl(d) { const o=canvas.getActiveObject(); if(!o) return; d==='top'?o.bringToFront():o.sendToBack(); canvas.requestRenderAll(); save(); }
+    function alignObj(h,v) { 
+        const o = canvas.getActiveObject(); if(!o) return; 
+        const r = o.getBoundingRect(true); 
+        if(h==='left') o.set('left', o.left - r.left);
+        if(h==='center') o.set('left', (baseW - r.width) / 2 + (o.left - r.left));
+        if(h==='right') o.set('left', baseW - r.width + (o.left - r.left));
+        if(v==='top') o.set('top', o.top - r.top);
+        if(v==='center') o.set('top', (baseH - r.height) / 2 + (o.top - r.top));
+        if(v==='bottom') o.set('top', baseH - r.height + (o.top - r.top));
+        o.setCoords(); canvas.requestRenderAll(); save(); 
+    }
+    
+    async function saveTpl() { 
+        const db=await openDB(); const json=canvas.toJSON(['isVert']);
+        const data={id:Date.now(),json:JSON.stringify(json),thumb:getHighResImage(0.15),baseW:baseW,baseH:baseH}; 
+        db.transaction("templates","readwrite").objectStore("templates").add(data).onsuccess=renderTpls; 
+    }
+    async function renderTpls() { 
+        const db = await openDB(); 
+        const grid = document.getElementById('tpl-grid'); 
+        grid.innerHTML = ""; 
+        db.transaction("templates").objectStore("templates").getAll().onsuccess = e => { 
+            e.target.result.forEach(item => { 
+                const div = document.createElement('div'); 
+                div.className = 'tpl-item'; 
+                // 增加导出按钮
+                div.innerHTML = `
+                    <img src="${item.thumb || ''}" style="background:#eee">
+                    <div style="display:flex; justify-content: space-between; padding: 2px;">
+                        <button style="font-size:10px; border:none; background:#eee;" onclick="exportTpl(${JSON.stringify(item).replace(/"/g, '&quot;')})">导出</button>
+                        <button style="font-size:10px; border:none; background:red; color:#fff;" onclick="delTpl(${item.id},event)">删除</button>
+                    </div>
+                `; 
+                div.onclick = (e) => { 
+                    if(e.target.tagName !== 'BUTTON') { loadState(item.json); closeAllPanels(); }
+                }; 
+                grid.appendChild(div); 
+            }); 
+        }; 
+    }
+
+	async function delTpl(id, e) { e.stopPropagation(); if (confirm('确定删除模板？')) { const db = await openDB(); db.transaction("templates", "readwrite").objectStore("templates").delete(id).onsuccess = renderTpls; } }
+
+    canvas.on('selection:created', e=>{ closeAllPanels(); updateUI(e.selected[0]); });
+    canvas.on('selection:updated', e=>{ closeAllPanels(); updateUI(e.selected[0]); });
+    canvas.on('selection:cleared', () => closeAllPanels());
+    canvas.on('object:modified', save);
+	
+	canvas.on('object:moving', () => closeAllPanels());
+	canvas.on('object:scaling', () => closeAllPanels());
+	canvas.on('object:rotating', () => closeAllPanels());
+
+    function updateUI(o) {
+        if (!o) return; document.getElementById('prop-panel').classList.add('active');
+        const isT = o.type === 'i-text' || o.type === 'textbox';
+        document.getElementById('text-tools').style.display = isT ? 'block' : 'none';
+        const op = Math.round(o.opacity * 100); document.getElementById('op-range').value = op; document.getElementById('op-input').value = op;
+		document.getElementById('lock-btn').innerText = o.lockMovementX ? '🔓' : '🔒';
+        const fs = isT ? Math.round(o.fontSize) : Math.round(o.scaleX * 100);
+        document.getElementById('fs-range').value = fs; document.getElementById('fs-input').value = fs;
+        if (isT) {
+            document.getElementById('text-val-inp').value = o.text.replace(/\n/g, '');
+			document.getElementById('lh-range').value = Math.round(o.lineHeight * 100);
+			document.getElementById('cs-range').value = o.charSpacing || 0;
+        }
+    }
+	
+	function exportTpl(item) {
+	    const jsonStr = item.json;
+	    const timestamp = Date.now();
+	    const randomSuffix = Math.floor(Math.random() * 1000);
+	    const filename = `模板_${timestamp}_${randomSuffix}.json`;
+	    
+	    if (window.plus) {
+	        // 使用 PUBLIC_DOWNLOADS 目录，对应手机系统“下载”文件夹
+	        plus.io.requestFileSystem(plus.io.PUBLIC_DOWNLOADS, function(fs) {
+	            fs.root.getFile(filename, {create: true}, function(fileEntry) {
+	                fileEntry.createWriter(function(writer) {
+	                    writer.onwriteend = function() {
+	                        alert("导出成功！");
+	                    };
+	                    writer.write(jsonStr);
+	                });
+	            }, function(e) {
+	                // 如果报错权限不足，说明 APP 缺少存储权限
+	                alert("导出失败，请检查是否已开启存储权限: " + e.message);
+	            });
+	        });
+	    } else {
+	        // 浏览器环境
+	        const blob = new Blob([jsonStr], { type: 'application/json' });
+	        const url = URL.createObjectURL(blob);
+	        const a = document.createElement('a');
+	        a.href = url;
+	        a.download = filename;
+	        a.click();
+	        URL.revokeObjectURL(url);
+	    }
+	}
+
+
+
+
+ 
+	// 导入模板
+	function importTpl(input) {
+	    const file = input.files[0];
+	    if (!file) return;
+	    const reader = new FileReader();
+	    reader.onload = async (e) => {
+	        try {
+	            const jsonStr = e.target.result;
+	            const json = JSON.parse(jsonStr);
+	            
+	            // 为了生成预览图，我们需要一个临时离屏 canvas，或者临时渲染到当前 canvas
+	            // 这里简单做法：先记录当前状态，导入JSON，生成图片，再恢复状态
+	            const oldJson = JSON.stringify(canvas.toJSON(['isVert', 'lockMovementX', 'lockMovementY', 'lockRotation', 'lockScalingX', 'lockScalingY', 'hasControls']));
+	            
+	            canvas.loadFromJSON(json, async () => {
+	                // 渲染完成后生成缩略图
+	                const thumb = getHighResImage(0.15); 
+	                
+	                // 存入数据库
+	                const db = await openDB();
+	                const data = { id: Date.now(), json: jsonStr, thumb: thumb, baseW: baseW, baseH: baseH };
+	                db.transaction("templates", "readwrite").objectStore("templates").add(data).onsuccess = () => {
+	                    renderTpls();
+	                    // 恢复回原来的画布内容
+	                    loadState(oldJson);
+	                    alert("模板导入成功");
+	                };
+	            });
+	        } catch (err) { alert("模板格式错误"); }
+	    };
+	    reader.readAsText(file);
+	    input.value = '';
+	}
+
+
+
+    window.onload = async () => {
+        const sel = document.getElementById('font-family');
+		const fonts = [
+		    ["思源宋体 - 极细", "'Noto Serif SC'|300"], 
+		    ["思源宋体 - 常规", "'Noto Serif SC'|400"],
+		    ["思源宋体 - 中等", "'Noto Serif SC'|500"], 
+		    ["思源宋体 - 粗体", "'Noto Serif SC'|700"],
+		    ["思源宋体 - 极粗", "'Noto Serif SC'|900"], 
+		    ["思源黑体 - 细", "'Noto Sans SC'|300"],
+		    ["思源黑体 - 常规", "'Noto Sans SC'|400"], 
+		    ["思源黑体 - 中等", "'Noto Sans SC'|500"],
+		    ["思源黑体 - 粗体", "'Noto Sans SC'|700"], 
+		    ["思源黑体 - 极粗", "'Noto Sans SC'|900"]
+		];
+
+        fonts.forEach(f => sel.add(new Option(f[0], f[1])));
+        
+        initColors(); fit();
+        if (!localStorage.getItem('software_default_font')) localStorage.setItem('software_default_font', "'Noto Serif SC'|700");
+        sel.value = localStorage.getItem('software_default_font');
+
+        // 核心：启动时先查数据库，再查 localStorage
+        const db = await openDB();
+        db.transaction("config").objectStore("config").get("last_state").onsuccess = e => {
+            const res = e.target.result;
+            if (res && res.data) { history = [res.data]; loadState(res.data); } 
+            else {
+                const s = localStorage.getItem('v17_stable');
+                if(s) { history = [s]; loadState(s); } else save();
+            }
+        };
+
+        // 恢复导入的字体
+        db.transaction("fonts").objectStore("fonts").getAll().onsuccess = e => {
+            e.target.result.forEach(f => {
+                const face = new FontFace(f.name, `url(${f.data})`);
+                face.load().then(l => {
+                    document.fonts.add(l);
+                    if (![...sel.options].some(o => o.value === f.name)) sel.add(new Option(f.name, f.name), 0);
+                    canvas.requestRenderAll();
+                });
+            });
+        };
+    };
+	
+    window.onresize = fit;
+</script>
+</body>
+</html>
